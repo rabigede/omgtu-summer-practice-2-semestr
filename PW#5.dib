@@ -62,6 +62,47 @@ var queue2 = new BlockingCollection<Message>(2); //очередь второго
 
 // Здесь писать решение
 
+Thread tr1 = new Thread(firstThread);
+Thread tr2 = new Thread(secondThread);
+
+queue1.Add(new Message());
+tr1.Start();
+tr2.Start();
+
+tr1.Join();
+tr2.Join();
+
+void firstThread()
+{
+    int handled1 = 0;
+    for (int i = 0; i < 100; i++)
+    {
+        var message = queue1.Take();
+        message.Handle();
+        if(handled1!=100)
+        {
+            var newMessage = new Message();
+            queue2.Add(newMessage);
+        }
+    }
+}
+
+void secondThread()
+{
+    int handled2 = 0;
+    for (int i = 0; i < 100; i++)
+    {
+        var message = queue2.Take();
+        message.Handle();
+        handled2++;
+        if(handled2!=100)
+        {
+            var newMessage = new Message();
+            queue1.Add(newMessage);
+        }
+    }
+}
+
 #!csharp
 
 Assert.Equal(0, queue1.Count);

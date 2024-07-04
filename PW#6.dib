@@ -43,4 +43,141 @@
 
 #!markdown
 
-## Вывод
+#!csharp
+
+#r "nuget:ScottPlot, 5.0.36"
+
+using System.Threading;
+using System.Diagnostics;
+using System.Collections.Concurrent;
+using Microsoft.DotNet.Interactive.Formatting;
+
+Queue<string> unsafeQueue = new();
+BlockingCollection<string> blockColl = new();
+ConcurrentQueue<string> queueSafe = new();
+
+static ManualResetEvent manualResetEvent = new(false);
+
+Stopwatch clock = new();
+
+Formatter.Register(typeof(ScottPlot.Plot), (p, w) => 
+    w.Write(((ScottPlot.Plot)p).GetImageHtml(1000, 400)), HtmlFormatter.MimeType);
+
+#!markdown
+
+#!csharp
+
+List<long> allTicks = new();
+
+for (int k = 0; k < 10; k++)
+{
+    clock.Start();
+    for (int i = 0; i < 1_000_000; i++)
+        unsafeQueue.Enqueue("_message_");
+
+    for (int i = 0; i < 1_000_000; i++)
+        unsafeQueue.Dequeue();
+
+    clock.Stop();
+
+    allTicks.Add(clock.ElapsedTicks);
+    clock.Reset();
+}
+
+Console.WriteLine(allTicks.Average());
+
+ScottPlot.Plot plt = new();
+plt.Add.Scatter(allTicks, Enumerable.Range(1, 10).ToList());
+
+plt
+
+#!markdown
+
+#!csharp
+
+List<long> allTicks = new();
+
+for (int k = 0; k < 10; k++)
+{
+    Task writeData = Task.Run(() => {
+        manualResetEvent.WaitOne();
+        clock.Start();
+
+        for (int i = 0; i < 1_000_000; i++)
+            blockColl.Add("_message_");
+    });
+
+    Task readData = Task.Run(() => {
+        manualResetEvent.Set();
+        
+        for (int i = 0; i < 1_000_000; i++)
+            blockColl.Take();
+
+        clock.Stop();
+        allTicks.Add(clock.ElapsedTicks);
+    });
+
+    Task.WaitAll(writeData, readData);
+    manualResetEvent.Reset();
+    clock.Reset();
+}
+
+Console.WriteLine(allTicks.Average());
+
+ScottPlot.Plot plt = new();
+plt.Add.Scatter(allTicks, Enumerable.Range(1, 10).ToList());
+
+plt
+
+#!markdown
+
+#!csharp
+
+List<long> allTicks = new();
+
+for (int k = 0; k < 10; k++)
+{
+    Task writeData = Task.Run(() => {
+        manualResetEvent.WaitOne();
+        clock.Start();
+
+        for (int i = 0; i < 1_000_000; i++)
+            queueSafe.Enqueue("_message_");
+    });
+
+    Task readData = Task.Run(() => {
+        manualResetEvent.Set();
+        
+        for (int i = 0; i < 1_000_000; i++)
+            queueSafe.TryDequeue(out string message);
+
+        clock.Stop();
+        allTicks.Add(clock.ElapsedTicks);
+    });
+
+    Task.WaitAll(writeData, readData);
+    manualResetEvent.Reset();
+    clock.Reset();
+}
+
+Console.WriteLine(allTicks.Average());
+
+ScottPlot.Plot plt = new();
+plt.Add.Scatter(allTicks, Enumerable.Range(1, 10).ToList());
+
+plt
+
+#!markdown
+
+ВЫВОД
+
+#!markdown
+
+самая быстрая потокобезопасная очередь - ConcurrentQueue.
+она быстрее непотокобезопасной на 20%
+
+среднее количество тиков для непотокобезопасной очереди: 159485.1
+
+среднее количество тиков для BlockingColection: 1662137.8
+
+среднее количество тиков для  ConcurrentQueue:  128106.6

@@ -18,13 +18,188 @@
 
 Для иллюстрации выполнненой работы определить команду
 
+#!markdown
+
+Необходимо проиллюстрировать выполнение 5 экземпляров TestCommand 3 раза, затем остановить поток с помощью HardStop.
+
+#!markdown
+
 #!csharp
 
-interface ICommand
+using System.Collections.Concurrent;
+using System.Threading;
+
+public interface ICommand
 {
     void Execute();
 }
 
+public interface IScheduler
+{
+    bool HasCommand();
+    ICommand Select();
+    void Add(ICommand cmd);
+}
+
+public class ExceptionHandler
+{
+    public static void Handle(Exception ex)
+    {
+        Console.WriteLine($"Exception message:\n\t{ex.Message}");
+    }
+}
+
+
+public class Scheduler : IScheduler
+{
+    BlockingCollection<ICommand> schedulerQueue = [];
+
+    public bool HasCommand() => schedulerQueue.Count > 0;
+
+    public ICommand Select() => schedulerQueue.Take();
+
+    public void Add(ICommand cmd) => schedulerQueue.Add(cmd);
+}
+
+#!markdown
+
+#!csharp
+
+public class ServerThread
+{
+    BlockingCollection<ICommand> serverQueue = [];
+    bool needStop = false;
+    public Scheduler scheduler;
+
+    public Thread Thread { get; private set; }
+
+    public ServerThread()
+    {
+        scheduler = new();
+        Thread = new(RunServer);
+        Thread.Start();
+    }
+
+    public void RunServer()
+    {
+        while (true)
+        {
+            if (needStop && serverQueue.Count == 0 && !scheduler.HasCommand())
+                break;
+
+            ICommand command;
+            if (scheduler.HasCommand())
+                command = scheduler.Select();
+            else if (!serverQueue.TryTake(out command))
+            {
+                Thread.Sleep(10);
+                continue;
+            }
+
+             try
+            {
+                command.Execute();
+            }
+            catch (ThreadInterruptedException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                ExceptionHandler.Handle(ex);
+                break;
+            }
+        }
+    }
+
+    public void AddCommand(ICommand command) => serverQueue.Add(command);
+
+    public void StopWithEmpty() => needStop = true;
+}
+
+
+public class HardStopCommand(ServerThread serverThread) : ICommand
+{
+    ServerThread serverThread = serverThread;
+
+    public void Execute()
+    {
+        if (serverThread.Thread != Thread.CurrentThread)
+            throw new Exception(
+                "HardStopError: The thread received for processing is not current!"
+            );
+
+        throw new ThreadInterruptedException();
+    }
+}
+
+public class SoftStopCommand(ServerThread serverThread) : ICommand
+{
+    ServerThread serverThread = serverThread;
+
+    public void Execute()
+    {
+        if (serverThread.Thread != Thread.CurrentThread)
+            throw new Exception(
+                "SoftStopError: The thread received for processing is not current!"
+            );
+
+        serverThread.StopWithEmpty();
+    }
+}
+
+public class LongCommand(ServerThread serverThread, ICommand command, int counter) : ICommand
+{
+    ServerThread serverThread = serverThread;
+    int counter = counter;
+    ICommand command = command;
+
+    public void Execute()
+    {
+        if (counter == 0)
+            return;
+        counter--;
+
+        command.Execute();
+
+        serverThread.scheduler.Add(this);
+    }
+}
+
+#!markdown
+
+#!csharp
+
+public class TestShortCommand : ICommand
+{
+    public void Execute()
+    {
+        Console.WriteLine("Do something...");
+
+        Thread.Sleep(500);
+
+        Console.WriteLine("Ready.");
+    }
+}
+
+public class TestLongCommand(ServerThread serverThread, int counter) : ICommand
+{
+    ServerThread serverThread = serverThread;
+    int counter = counter;
+
+    public void Execute()
+    {
+        if (counter == 0)
+            return;
+        counter--;
+
+        Console.WriteLine($"Do something: {counter} more times...");
+        Thread.Sleep(500);
+        Console.WriteLine("Ready.");
+
+        serverThread.scheduler.Add(this);
+    }
+}
 
 public class TestCommand(int id) : ICommand
 {
@@ -38,4 +213,14 @@ public class TestCommand(int id) : ICommand
 
 #!markdown
 
-Необходимо проиллюстрировать выполнение 5 экземпляров TestCommand 3 раза, затем остановить поток с помощью HardStop.
+#!csharp
+
+ServerThread server = new();
+
+for (int i = 1; i <= 5; i++)
+    server.AddCommand(new LongCommand(server, new TestCommand(i), 3));
+server.AddCommand(new HardStopCommand(server));
+
+server.Thread.Join();
+
+Console.WriteLine("Server stopped.");

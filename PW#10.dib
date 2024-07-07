@@ -36,3 +36,139 @@
 1. [Паттерн Сообщение](https://www.enterpriseintegrationpatterns.com/patterns/messaging/Message.html)
 2. [Паттерн Роутер - весь раздел про Роутеры](https://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageRoutingIntro.html)
 3. [Обмен сообщеними](https://www.enterpriseintegrationpatterns.com/patterns/messaging/MessageConstructionIntro.html)
+
+#!markdown
+
+#!csharp
+
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+
+public class Message
+{
+    public string Content { get; }
+    public Guid CommandId { get; }
+
+    public Message(string content, Guid commandId)
+    {
+        Content = content;
+        CommandId = commandId;
+    }
+}
+
+public class Command
+{
+    private readonly ConcurrentQueue<Message> _messageQueue = new ConcurrentQueue<Message>();
+    private readonly CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+
+    public Guid Id { get; }
+
+    public Command()
+    {
+        Id = Guid.NewGuid();
+    }
+
+    public void Start()
+    {
+        Task.Run(() =>
+        {
+            while (!_cancellationTokenSource.IsCancellationRequested)
+            {
+                if (_messageQueue.TryDequeue(out var message))
+                {
+                    Console.WriteLine($"Команда {Id} получила сообщение: {message.Content}");
+                }
+                else
+                {
+                    Thread.Sleep(100);
+                }
+            }
+        });
+    }
+
+    public void Stop()
+    {
+        _cancellationTokenSource.Cancel();
+    }
+
+    public void EnqueueMessage(Message message)
+    {
+        _messageQueue.Enqueue(message);
+    }
+}
+
+public class Router
+{
+    private readonly ConcurrentDictionary<Guid, Command> _commandDictionary = new ConcurrentDictionary<Guid, Command>();
+    private readonly ConcurrentQueue<Message> _messageQueue = new ConcurrentQueue<Message>();
+    private readonly CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+
+    public void Start()
+    {
+        Task.Run(() =>
+        {
+            while (!_cancellationTokenSource.IsCancellationRequested)
+            {
+                if (_messageQueue.TryDequeue(out var message))
+                {
+                    if (_commandDictionary.TryGetValue(message.CommandId, out var command))
+                    {
+                        command.EnqueueMessage(message);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Не удается доставить сообщение неизвестному получателю: {message.Content}");
+                    }
+                }
+                else
+                {
+                    Thread.Sleep(100);
+                }
+            }
+        });
+    }
+
+    public void Stop()
+    {
+        _cancellationTokenSource.Cancel();
+    }
+
+    public void RegisterCommand(Command command)
+    {
+        _commandDictionary.TryAdd(command.Id, command);
+    }
+
+    public void UnregisterCommand(Command command)
+    {
+        _commandDictionary.TryRemove(command.Id, out _);
+    }
+
+    public void EnqueueMessage(Message message)
+    {
+        _messageQueue.Enqueue(message);
+    }
+}
+var router = new Router();
+        router.Start();
+
+        var command1 = new Command();
+        var command2 = new Command();
+
+        router.RegisterCommand(command1);
+        router.RegisterCommand(command2);
+
+        command1.Start();
+        command2.Start();
+
+        router.EnqueueMessage(new Message("Команда 1", command1.Id));
+        router.EnqueueMessage(new Message("Команда 2", command2.Id));
+        router.EnqueueMessage(new Message("Неизвестная команда", Guid.NewGuid()));
+
+        Thread.Sleep(1000);
+
+        command1.Stop();
+        command2.Stop();
+        router.Stop();

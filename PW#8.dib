@@ -37,9 +37,14 @@
 
 public interface IScheduler
 {
-    bool HasCommand()
+    bool HasCommand();
     ICommand Select();
     void Add(ICommand cmd);
+}
+
+public interface ICommand
+{
+    void Execute();
 }
 
 #!markdown
@@ -55,3 +60,79 @@ public interface IScheduler
 Необходимо учесть этот момент при реализации очереди.
 
 2. Для обепечения справедливости стратегии планировщика в слабом смысле использовать стратегию Round Robbin (циклическую) для определения следующего потока на исполнение.
+
+#!csharp
+
+using System;
+using System.Collections.Concurrent;
+using System.Threading;
+
+public class Command : ICommand
+{
+    private string _name;
+
+    public Command(string name)
+    {
+        _name = name;
+    }
+
+    public void Execute()
+    {
+        Console.WriteLine($"Executing command: {_name}");
+        Thread.Sleep(1000);
+    }
+}
+public class Scheduler : IScheduler
+{
+    private List<ICommand> _commands = new List<ICommand>();
+    private int _currentIndex = 0;
+
+    public bool HasCommand()
+    {
+        return _commands.Count > 0;
+    }
+
+    public ICommand Select()
+    {
+        if (_commands.Count == 0)
+        {
+            return null;
+        }
+
+        ICommand selectedCommand = _commands[_currentIndex];
+        _currentIndex = (_currentIndex + 1) % _commands.Count; 
+        return selectedCommand;
+    }
+
+    public void Add(ICommand cmd)
+    {
+        _commands.Add(cmd);
+    }
+}
+
+#!csharp
+
+Scheduler scheduler = new Scheduler();
+
+Thread thread = new Thread(() =>
+{
+    while (true)
+    {
+        if (scheduler.HasCommand())
+        {
+            ICommand command = scheduler.Select();
+            command.Execute();
+        }
+        else
+        {
+            Thread.Sleep(100);
+        }
+    }
+});
+
+thread.Start();
+scheduler.Add(new Command("Command 1"));
+scheduler.Add(new Command("Command 2"));
+Thread.Sleep(2000);
+scheduler.Add(new Command("Command 3"));
+Thread.Sleep(3000);

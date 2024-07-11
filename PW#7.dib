@@ -38,3 +38,138 @@ ServerThread может менять свое поведение для обра
 Отсутствие Команд в очереди потока не должно требовать значительных затрат процессорного времени. Значительными считаются затраты, которые зависят от времени простоя потока.
 
 Написать проверку, которая гарантирует правильное выполнение команд HardStop и SoftStop.
+
+#!csharp
+
+using System;
+using System.Collections.Concurrent;
+using System.Threading;
+
+public class ServerThread
+{
+    private ConcurrentQueue<ICommand> commandQueue = new ConcurrentQueue<ICommand>();
+    private Thread thread;
+    private bool isRunning = true;
+    private bool isSoftStopping = false;
+    private bool isHardStopping = false;
+
+    public ServerThread()
+    {
+        thread = new Thread(Run);
+        thread.Start();
+    }
+
+    public void AddCommand(ICommand command)
+    {
+        commandQueue.Enqueue(command);
+    }
+
+    private void Run()
+    {
+        while (isRunning)
+        {
+            if (commandQueue.TryDequeue(out ICommand command))
+            {
+                if (!isSoftStopping && !isHardStopping)
+                {
+                    try
+                    {
+                        command.Execute();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Исключение в команде: {ex.Message}");
+                    }
+                }
+            }
+            else if (isSoftStopping)
+            {
+                isRunning = false;
+            }
+            else
+            {
+                Thread.Sleep(1);
+            }
+        }
+    }
+
+    public void SoftStop()
+    {
+        if (Thread.CurrentThread != thread)
+        {
+            throw new InvalidOperationException("Команда SoftStop может выполняться только в том же потоке.");
+        }
+
+        isSoftStopping = true;
+    }
+
+    public void HardStop()
+    {
+        if (Thread.CurrentThread != thread)
+        {
+            throw new InvalidOperationException("Команда HardStop может выполняться только в том же потоке.");
+        }
+
+        isRunning = false;
+        thread.Abort();
+    }
+}
+
+#!csharp
+
+public class HardStopCommand : ICommand
+{
+    private ServerThread serverThread;
+
+    public HardStopCommand(ServerThread serverThread)
+    {
+        this.serverThread = serverThread;
+    }
+
+    public void Execute()
+    {
+        serverThread.HardStop();
+    }
+}
+
+public class SoftStopCommand : ICommand
+{
+    private ServerThread serverThread;
+
+    public SoftStopCommand(ServerThread serverThread)
+    {
+        this.serverThread = serverThread;
+    }
+
+    public void Execute()
+    {
+        serverThread.SoftStop();
+    }
+}
+
+public class CommandWrapper : ICommand
+{
+    private Action action;
+
+    public CommandWrapper(Action action)
+    {
+        this.action = action;
+    }
+
+    public void Execute()
+    {
+        action();
+    }
+}
+
+#!csharp
+
+var serverThread = new ServerThread();
+serverThread.AddCommand(new CommandWrapper(() => Console.WriteLine("Команда 1")));
+serverThread.AddCommand(new CommandWrapper(() => Console.WriteLine("Команда 2")));
+serverThread.AddCommand(new SoftStopCommand(serverThread));
+serverThread.AddCommand(new CommandWrapper(() => Console.WriteLine("Команда 3"))); // команда не должна выполняться
+
+Thread.Sleep(1000);
+
+Console.WriteLine("Основной поток завершается.");
